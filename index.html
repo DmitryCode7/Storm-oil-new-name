@@ -31,6 +31,7 @@ input{background:#222;border:1px solid #444;color:#fff;padding:6px 8px;border-ra
 </style>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 </head>
 <body>
 <div class="header"><div class="logo">STORM OIL <span class="online">● ONLINE V2</span></div><button onclick="toggleAdmin()" id="adminBtn" style="background:none;border:1px solid #444;color:#aaa;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px">Адм</button></div>
@@ -46,7 +47,8 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-let isAdmin = localStorage.getItem('storm_admin')==='1';
+const auth = firebase.auth();
+let isAdmin = false;
 let currentCat=null, currentBrand=null;
 
 async function migrateIfNeeded(){
@@ -116,7 +118,7 @@ async function openBrand(brand){
   currentBrand=brand;
   const snap=await db.collection('products').where('categoryId','==',currentCat.id).where('brand','==',brand).get();
   let list=[]; snap.forEach(d=>list.push(d.data())); list.sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${brand} <span style="color:#888;font-size:12px">[${currentCat.name}]</span></h1><div class="back-small" onclick="openCategory(${currentCat.id})">← к брендам</div></div><input id="sProd" oninput="filterProd()" placeholder="Поиск..." style="width:100%;margin-top:8px;padding:8px"><div class="admin-bar"><input id="pName" placeholder="Название"><input id="pVol" placeholder="Объем" style="width:70px"><input id="pPrice" placeholder="Цена" style="width:80px"><button class="btn" onclick="addProd()">+ Товар</button></div><table><thead><tr><th>№</th><th>Название</th><th>Объем</th><th>Цена</th><th></th></tr></thead><tbody id="tbody">${list.map((p,i)=>`<tr data-name="${p.name.toLowerCase()}"><td>${i+1}</td><td>${p.name}</td><td>${p.volume}</td><td>${isAdmin?`<input value="${p.price}" onchange="updPrice(${p.id},this.value)" style="width:70px">`:p.price+' ₸'}</td><td>${isAdmin?`<button onclick="delProd(${p.id})" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button>`:''}</td></tr>`).join('')}</tbody></table>`;
+  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${brand} <span style="color:#888;font-size:12px">[${currentCat.name}]</span></h1><div class="back-small" onclick="openCategory(${currentCat.id})">← к брендам</div></div><input id="sProd" oninput="filterProd()" placeholder="Поиск..." style="width:100%;margin-top:8px;padding:8px">${isAdmin?`<div class="admin-bar"><input id="pName" placeholder="Название"><input id="pVol" placeholder="Объем" style="width:70px"><input id="pPrice" placeholder="Цена" style="width:80px"><button class="btn" onclick="addProd()">+ Товар</button></div>`:''}<table><thead><tr><th>№</th><th>Название</th><th>Объем</th><th>Цена</th><th></th></tr></thead><tbody id="tbody">${list.map((p,i)=>`<tr data-name="${p.name.toLowerCase()}"><td>${i+1}</td><td>${p.name}</td><td>${p.volume}</td><td>${isAdmin?`<input value="${p.price}" onchange="updPrice(${p.id},this.value)" style="width:70px">`:p.price+' ₸'}</td><td>${isAdmin?`<button onclick="delProd(${p.id})" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button>`:''}</td></tr>`).join('')}</tbody></table>`;
 }
 function filterProd(){const q=document.getElementById('sProd').value.toLowerCase();document.querySelectorAll('#tbody tr').forEach(tr=>{tr.style.display=tr.dataset.name.includes(q)?'':'none'})}
 async function addProd(){
@@ -130,8 +132,31 @@ async function addProd(){
 }
 async function delProd(id){ if(!confirm('Удалить?')) return; await db.collection('products').doc(String(id)).delete(); openBrand(currentBrand); }
 async function updPrice(id,val){ await db.collection('products').doc(String(id)).update({price:val}); }
-function toggleAdmin(){if(!isAdmin){let l=prompt("Логин:");let p=prompt("Пароль:");if(l==="admin" && p==="Storm123"){isAdmin=true;localStorage.setItem('storm_admin','1');} else {alert("Неверно");return;}} else {isAdmin=false;localStorage.setItem('storm_admin','0');}document.getElementById('adminBtn').innerText=isAdmin?'Выйти':'Адм';if(currentBrand) openBrand(currentBrand); else if(currentCat) openCategory(currentCat.id); else renderCategories();}
-window.onload=()=>{if(isAdmin) document.getElementById('adminBtn').innerText='Выйти';load();};
+
+// НОВЫЙ АДМИН - через Firebase Auth, пароля в коде больше нет
+async function toggleAdmin(){
+  if(isAdmin){
+    await auth.signOut();
+    return;
+  }
+  let email = prompt("Email админа:");
+  if(!email) return;
+  let pass = prompt("Пароль:");
+  if(!pass) return;
+  try{
+    await auth.signInWithEmailAndPassword(email.trim(), pass);
+  }catch(e){
+    alert("Неверный email или пароль: " + e.message);
+  }
+}
+auth.onAuthStateChanged(user=>{
+  isAdmin = !!user;
+  document.getElementById('adminBtn').innerText = isAdmin ? 'Выйти ('+user.email+')' : 'Адм';
+  if(currentBrand) openBrand(currentBrand);
+  else if(currentCat) openCategory(currentCat.id);
+  else renderCategories();
+});
+window.onload=()=>{ load(); };
 </script>
 </body>
 </html>
