@@ -34,14 +34,9 @@ input{background:#222;border:1px solid #444;color:#fff;padding:6px 8px;border-ra
 .qty-btn{background:#222;border:1px solid #444;color:#fff;width:28px;height:28px;border-radius:6px;cursor:pointer;font-weight:900;font-size:16px;line-height:1}
 .qty-btn:hover{border-color:#c79a5d;color:#c79a5d}
 .qty-num{font-weight:800;font-size:16px;min-width:36px;display:inline-block;text-align:center}
-/* Всплывающее окно выбора фильтров */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
-.modal-box{background:#1c1c1c;border:1px solid #333;border-radius:16px;padding:22px;width:100%;max-width:380px;text-align:center}
-.modal-box h2{font-size:20px;margin-bottom:6px}
-.modal-box p{color:#888;margin-bottom:16px;font-size:12px}
-.choice-btn{width:100%;padding:16px;border-radius:12px;border:1px solid #333;background:#222;color:#fff;font-weight:800;font-size:16px;cursor:pointer;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:10px}
-.choice-btn:hover{border-color:#c79a5d;background:#262626}
-.choice-btn span{font-size:24px}
+.choice-btn{width:100%;padding:22px;border-radius:14px;border:1px solid #333;background:#1c1c1c;color:#fff;font-weight:800;font-size:18px;cursor:pointer;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:12px}
+.choice-btn:hover{border-color:#c79a5d;background:#222}
+.choice-btn span{font-size:32px}
 .filter-switch{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
 .filter-switch button{flex:1;padding:9px;border-radius:8px;border:1px solid #333;background:#222;color:#fff;font-weight:800;cursor:pointer;font-size:12px}
 .filter-switch button.active{background:#c79a5d;color:#000;border-color:#c79a5d}
@@ -70,6 +65,7 @@ let isAdmin = false;
 let currentCat=null, currentBrand=null;
 let viewingFilters=false;
 let currentFilterType=null;
+let authReady=false;
 
 function setTab(active){
   document.getElementById('tabCatBtn').classList.toggle('active', active==='cat');
@@ -129,4 +125,107 @@ async function renderCategories(){
   cats.sort((a,b)=>a.id-b.id);
   document.getElementById('app').innerHTML=`<h1>Категории • ${cats.length}</h1>${isAdmin?`<div class="admin-bar"><input id="newCat" placeholder="Новая категория"><button class="btn" onclick="addCategory()">+ Добавить</button></div>`:''}<div class="grid">${cats.map(c=>`<div class="card" onclick="openCategory(${c.id})"><div class="icon">${c.icon||'📦'}</div><div class="cat-name">${c.name}</div>${isAdmin?`<button class="del" style="top:6px;right:7px;width:22px;height:22px" onclick="event.stopPropagation();delCategory(${c.id})">✕</button>`:''}</div>`).join('')}</div>`;
 }
-async function addCategory(){const el=document.getElementById('newCat');const name=el.value.trim();if(!name) return;const id=Date.now();await db.collection('categories').doc(String(id)).set({
+async function addCategory(){const el=document.getElementById('newCat');const name=el.value.trim();if(!name) return;const id=Date.now();await db.collection('categories').doc(String(id)).set({id,name,icon:'📦'});renderCategories();}
+async function delCategory(id){if(!confirm('Удалить категорию?')) return; await db.collection('categories').doc(String(id)).delete(); const bSnap=await db.collection('brands').where('categoryId','==',id).get(); bSnap.forEach(d=>d.ref.delete()); renderCategories();}
+async function openCategory(id){
+  viewingFilters=false; currentFilterType=null; setTab('cat');
+  const cDoc=await db.collection('categories').doc(String(id)).get(); currentCat=cDoc.data();
+  const snap=await db.collection('brands').where('categoryId','==',id).get();
+  let brands=[]; snap.forEach(d=>brands.push(d.data().name)); brands.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
+  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${currentCat.icon||''} ${currentCat.name}</h1><div class="back-small" onclick="renderCategories()">← к категориям</div></div><p style="color:#888;margin-bottom:8px">Брендов: ${brands.length} </p>${isAdmin?`<div class="admin-bar"><input id="newBrand" placeholder="Новый бренд"><button class="btn" onclick="addBrand()">+ Бренд</button></div>`:''}<div class="brand-grid">${brands.map(b=>`<div class="brand-card" onclick="openBrand('${b.replace(/'/g,"\\'")}')">${b}${isAdmin?`<button class="del" onclick="event.stopPropagation();delBrand('${b.replace(/'/g,"\\'")}')">✕</button>`:''}</div>`).join('')}</div>`;
+}
+async function addBrand(){const el=document.getElementById('newBrand');const name=el.value.trim();if(!name) return; await db.collection('brands').doc(`${currentCat.id}_${name}`).set({name, categoryId:currentCat.id}); openCategory(currentCat.id);}
+async function delBrand(b){if(!confirm(`Удалить ${b}?`)) return; await db.collection('brands').doc(`${currentCat.id}_${b}`).delete(); openCategory(currentCat.id);}
+async function openBrand(brand){
+  viewingFilters=false; currentFilterType=null; setTab('cat');
+  currentBrand=brand;
+  const snap=await db.collection('products').where('categoryId','==',currentCat.id).where('brand','==',brand).get();
+  let list=[]; snap.forEach(d=>list.push(d.data())); list.sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${brand} <span style="color:#888;font-size:12px">[${currentCat.name}]</span></h1><div class="back-small" onclick="openCategory(${currentCat.id})">← к брендам</div></div><input id="sProd" oninput="filterProd()" placeholder="Поиск..." style="width:100%;margin-top:8px;padding:8px">${isAdmin?`<div class="admin-bar"><input id="pName" placeholder="Название"><input id="pVol" placeholder="Объем" style="width:70px"><input id="pPrice" placeholder="Цена" style="width:80px"><button class="btn" onclick="addProd()">+ Товар</button></div>`:''}<table><thead><tr><th>№</th><th>Название</th><th>Объем</th><th>Цена</th><th></th></tr></thead><tbody id="tbody">${list.map((p,i)=>`<tr data-name="${p.name.toLowerCase()}"><td>${i+1}</td><td>${p.name}</td><td>${p.volume}</td><td>${isAdmin?`<input value="${p.price}" onchange="updPrice(${p.id},this.value)" style="width:70px">`:p.price+' ₸'}</td><td>${isAdmin?`<button onclick="delProd(${p.id})" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button>`:''}</td></tr>`).join('')}</tbody></table>`;
+}
+function filterProd(){const q=document.getElementById('sProd').value.toLowerCase();document.querySelectorAll('#tbody tr').forEach(tr=>{tr.style.display=tr.dataset.name.includes(q)?'':'none'})}
+async function addProd(){
+  const n=document.getElementById('pName').value.trim();
+  const v=document.getElementById('pVol').value.trim();
+  const pr=document.getElementById('pPrice').value.trim();
+  if(!n) return;
+  const id=Date.now();
+  await db.collection('products').doc(String(id)).set({id,name:n,volume:v||'-',price:pr||'0',categoryId:currentCat.id,brand:currentBrand});
+  openBrand(currentBrand);
+}
+async function delProd(id){ if(!confirm('Удалить?')) return; await db.collection('products').doc(String(id)).delete(); openBrand(currentBrand); }
+async function updPrice(id,val){ await db.collection('products').doc(String(id)).update({price:val}); }
+
+// ===== ФИЛЬТРА - БЕЗ БЛОКИРУЮЩЕГО ОКНА =====
+function openFilters(){
+  viewingFilters=true; currentCat=null; currentBrand=null; currentFilterType=null; setTab('filters');
+  document.getElementById('app').innerHTML=`
+    <h1>🔧 ФИЛЬТРА</h1>
+    <p style="color:#888;margin:8px 0 16px">Что проверяем?</p>
+    <button class="choice-btn" onclick="openFilterType('air')"><span>💨</span> ВОЗДУШНЫЕ</button>
+    <button class="choice-btn" onclick="openFilterType('cabin')"><span>🌬️</span> САЛОННЫЕ</button>
+    <p style="text-align:center;color:#555;font-size:11px;margin-top:10px">Нажми на нужный тип — откроется отдельная таблица</p>`;
+}
+async function openFilterType(type){
+  currentFilterType=type; viewingFilters=true; currentCat=null; currentBrand=null; setTab('filters');
+  const snap = await db.collection('filters').get();
+  let all=[]; snap.forEach(d=>all.push({docId:d.id, ...d.data()}));
+  let list = all.filter(f=> !f.type || f.type===type);
+  list.sort((a,b)=>(a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
+  const title = type==='air' ? '💨 ВОЗДУШНЫЕ' : '🌬️ САЛОННЫЕ';
+  const airCount = all.filter(f=> !f.type || f.type==='air').length;
+  const cabinCount = all.filter(f=> !f.type || f.type==='cabin').length;
+  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${title}</h1><div class="back-small" onclick="openFilters()">← выбрать тип</div></div>
+  <div class="filter-switch"><button class="${type==='air'?'active':''}" onclick="openFilterType('air')">💨 ВОЗДУШНЫЕ (${airCount})</button><button class="${type==='cabin'?'active':''}" onclick="openFilterType('cabin')">🌬️ САЛОННЫЕ (${cabinCount})</button></div>
+  <p style="color:#888;margin-bottom:8px">Позиций: ${list.length} • Всего на складе: ${list.reduce((s,f)=>s+(Number(f.qty)||0),0)} шт</p>
+  <input id="sFilter" oninput="filterFilters()" placeholder="Поиск фильтра..." style="width:100%;margin-top:8px;padding:8px">
+  ${isAdmin?`<div class="admin-bar"><input id="fName" placeholder="Название фильтра (${type==='air'?'Воздушный':'Салонный'})" style="flex:1;min-width:180px"><input id="fQty" placeholder="Кол-во" type="number" style="width:80px" value="0"><button class="btn" onclick="addFilter()">+ Фильтр</button></div>`:''}
+  <table><thead><tr><th style="width:50px">N°</th><th>Название</th><th style="width:170px;text-align:center">Количество</th>${isAdmin?`<th style="width:40px"></th>`:''}</tr></thead><tbody id="tbodyFilters">${list.map((f,i)=>{
+    const qty = Number(f.qty)||0;
+    const color = qty===4 ? '#00ff88' : qty>4 ? '#ffb400' : '#ff4444';
+    return `<tr data-name="${(f.name||'').toLowerCase()}"><td>${i+1}</td><td style="font-weight:600">${f.name}</td><td style="text-align:center">${isAdmin?`<button class="qty-btn" onclick="changeQty('${f.docId}',-1)">−</button> <span class="qty-num" style="color:${color}">${qty}</span> <button class="qty-btn" onclick="changeQty('${f.docId}',1)">+</button>`:`<span class="qty-num" style="color:${color}">${qty}</span>`}</td>${isAdmin?`<td><button onclick="delFilter('${f.docId}')" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button></td>`:''}</tr>`;
+  }).join('') || `<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">Пока нет фильтров в этом разделе.</td></tr>`}</tbody></table>`;
+}
+function filterFilters(){const q=document.getElementById('sFilter').value.toLowerCase();document.querySelectorAll('#tbodyFilters tr').forEach(tr=>{ if(!tr.dataset.name) return; tr.style.display=tr.dataset.name.includes(q)?'':'none' })}
+async function addFilter(){
+  const n=document.getElementById('fName').value.trim();
+  const q=parseInt(document.getElementById('fQty').value)||0;
+  if(!n) return;
+  await db.collection('filters').add({name:n, qty:q, type: currentFilterType || 'air', created:Date.now()});
+  openFilterType(currentFilterType || 'air');
+}
+async function changeQty(docId, delta){
+  const ref = db.collection('filters').doc(docId);
+  const d = await ref.get(); if(!d.exists) return;
+  let qty = (Number(d.data().qty)||0) + delta;
+  if(qty<0) qty=0;
+  await ref.update({qty:qty});
+  openFilterType(currentFilterType || 'air');
+}
+async function delFilter(docId){ if(!confirm('Удалить фильтр?')) return; await db.collection('filters').doc(docId).delete(); openFilterType(currentFilterType || 'air'); }
+
+// НОВЫЙ АДМИН
+async function toggleAdmin(){
+  if(isAdmin){ await auth.signOut(); return; }
+  let email = prompt("Email админа:");
+  if(!email) return;
+  let pass = prompt("Пароль:");
+  if(!pass) return;
+  try{ await auth.signInWithEmailAndPassword(email.trim(), pass); }catch(e){ alert("Неверный email или пароль: " + e.message); }
+}
+auth.onAuthStateChanged(user=>{
+  isAdmin = !!user;
+  document.getElementById('adminBtn').innerText = isAdmin ? 'Выйти ('+user.email+')' : 'Адм';
+  if(!authReady){ authReady=true; return; }
+  if(viewingFilters){
+    if(currentFilterType) openFilterType(currentFilterType);
+    else openFilters();
+  }
+  else if(currentBrand) openBrand(currentBrand);
+  else if(currentCat) openCategory(currentCat.id);
+  else renderCategories();
+});
+window.onload=()=>{ load(); };
+</script>
+</body>
+</html>
