@@ -28,6 +28,9 @@ td{padding:7px 6px;border-top:1px solid #2a2a2a;font-size:13px}
 input{background:#222;border:1px solid #444;color:#fff;padding:6px 8px;border-radius:5px;font-size:12px}
 .del{position:absolute;top:3px;right:4px;background:#2a2a2a;border:none;color:#ff4444;width:16px;height:16px;border-radius:50%;cursor:pointer;font-weight:900}
 .online{font-size:10px;color:#00ff88;margin-left:8px}
+.qty-btn{background:#222;border:1px solid #444;color:#fff;width:28px;height:28px;border-radius:6px;cursor:pointer;font-weight:900;font-size:16px;line-height:1}
+.qty-btn:hover{border-color:#c79a5d;color:#c79a5d}
+.qty-num{font-weight:800;font-size:16px;min-width:36px;display:inline-block;text-align:center}
 </style>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -50,6 +53,7 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 let isAdmin = false;
 let currentCat=null, currentBrand=null;
+let viewingFilters=false;
 
 async function migrateIfNeeded(){
   const oldRef = await db.collection('storm').doc('data').get();
@@ -94,7 +98,7 @@ async function load(){
   renderCategories();
 }
 async function renderCategories(){
-  currentCat=null; currentBrand=null;
+  currentCat=null; currentBrand=null; viewingFilters=false;
   const snap = await db.collection('categories').get();
   let cats = [];
   if(snap.empty){
@@ -102,11 +106,12 @@ async function renderCategories(){
     for(let c of defaults){ await db.collection('categories').doc(String(c.id)).set(c); cats.push(c); }
   } else { snap.forEach(d=>cats.push(d.data())); }
   cats.sort((a,b)=>a.id-b.id);
-  document.getElementById('app').innerHTML=`<h1>Категории • ${cats.length}</h1>${isAdmin?`<div class="admin-bar"><input id="newCat" placeholder="Новая категория"><button class="btn" onclick="addCategory()">+ Добавить</button></div>`:''}<div class="grid">${cats.map(c=>`<div class="card" onclick="openCategory(${c.id})"><div class="icon">${c.icon||'📦'}</div><div class="cat-name">${c.name}</div>${isAdmin?`<button class="del" style="top:6px;right:7px;width:22px;height:22px" onclick="event.stopPropagation();delCategory(${c.id})">✕</button>`:''}</div>`).join('')}</div>`;
+  document.getElementById('app').innerHTML=`<h1>Категории • ${cats.length+1}</h1>${isAdmin?`<div class="admin-bar"><input id="newCat" placeholder="Новая категория"><button class="btn" onclick="addCategory()">+ Добавить</button></div>`:''}<div class="grid"><div class="card" onclick="openFilters()" style="border-color:#c79a5d"><div class="icon">🔧</div><div class="cat-name">ФИЛЬТРА</div></div>${cats.map(c=>`<div class="card" onclick="openCategory(${c.id})"><div class="icon">${c.icon||'📦'}</div><div class="cat-name">${c.name}</div>${isAdmin?`<button class="del" style="top:6px;right:7px;width:22px;height:22px" onclick="event.stopPropagation();delCategory(${c.id})">✕</button>`:''}</div>`).join('')}</div>`;
 }
 async function addCategory(){const el=document.getElementById('newCat');const name=el.value.trim();if(!name) return;const id=Date.now();await db.collection('categories').doc(String(id)).set({id,name,icon:'📦'});renderCategories();}
 async function delCategory(id){if(!confirm('Удалить категорию?')) return; await db.collection('categories').doc(String(id)).delete(); const bSnap=await db.collection('brands').where('categoryId','==',id).get(); bSnap.forEach(d=>d.ref.delete()); renderCategories();}
 async function openCategory(id){
+  viewingFilters=false;
   const cDoc=await db.collection('categories').doc(String(id)).get(); currentCat=cDoc.data();
   const snap=await db.collection('brands').where('categoryId','==',id).get();
   let brands=[]; snap.forEach(d=>brands.push(d.data().name)); brands.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
@@ -115,6 +120,7 @@ async function openCategory(id){
 async function addBrand(){const el=document.getElementById('newBrand');const name=el.value.trim();if(!name) return; await db.collection('brands').doc(`${currentCat.id}_${name}`).set({name, categoryId:currentCat.id}); openCategory(currentCat.id);}
 async function delBrand(b){if(!confirm(`Удалить ${b}?`)) return; await db.collection('brands').doc(`${currentCat.id}_${b}`).delete(); openCategory(currentCat.id);}
 async function openBrand(brand){
+  viewingFilters=false;
   currentBrand=brand;
   const snap=await db.collection('products').where('categoryId','==',currentCat.id).where('brand','==',brand).get();
   let list=[]; snap.forEach(d=>list.push(d.data())); list.sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
@@ -132,6 +138,36 @@ async function addProd(){
 }
 async function delProd(id){ if(!confirm('Удалить?')) return; await db.collection('products').doc(String(id)).delete(); openBrand(currentBrand); }
 async function updPrice(id,val){ await db.collection('products').doc(String(id)).update({price:val}); }
+
+// ===== ФИЛЬТРА =====
+async function openFilters(){
+  viewingFilters=true; currentCat=null; currentBrand=null;
+  const snap = await db.collection('filters').get();
+  let list=[]; snap.forEach(d=>list.push({docId:d.id, ...d.data()}));
+  list.sort((a,b)=>(a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
+  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>🔧 ФИЛЬТРА</h1><div class="back-small" onclick="renderCategories()">← к категориям</div></div><p style="color:#888;margin-bottom:8px">Позиций: ${list.length} • Всего на складе: ${list.reduce((s,f)=>s+(Number(f.qty)||0),0)} шт</p><input id="sFilter" oninput="filterFilters()" placeholder="Поиск фильтра..." style="width:100%;margin-top:8px;padding:8px">${isAdmin?`<div class="admin-bar"><input id="fName" placeholder="Название фильтра" style="flex:1;min-width:180px"><input id="fQty" placeholder="Кол-во" type="number" style="width:80px" value="0"><button class="btn" onclick="addFilter()">+ Фильтр</button></div>`:''}<table><thead><tr><th style="width:50px">N°</th><th>Название</th><th style="width:170px;text-align:center">Количество</th>${isAdmin?`<th style="width:40px"></th>`:''}</tr></thead><tbody id="tbodyFilters">${list.map((f,i)=>{
+    const qty = Number(f.qty)||0;
+    const color = qty===4 ? '#00ff88' : qty>4 ? '#ffb400' : '#ff4444';
+    return `<tr data-name="${(f.name||'').toLowerCase()}"><td>${i+1}</td><td style="font-weight:600">${f.name}</td><td style="text-align:center">${isAdmin?`<button class="qty-btn" onclick="changeQty('${f.docId}',-1)">−</button> <span class="qty-num" style="color:${color}">${qty}</span> <button class="qty-btn" onclick="changeQty('${f.docId}',1)">+</button>`:`<span class="qty-num" style="color:${color}">${qty}</span>`}</td>${isAdmin?`<td><button onclick="delFilter('${f.docId}')" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button></td>`:''}</tr>`;
+  }).join('') || `<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">Пока нет фильтров. Добавь первый в админке.</td></tr>`}</tbody></table>`;
+}
+function filterFilters(){const q=document.getElementById('sFilter').value.toLowerCase();document.querySelectorAll('#tbodyFilters tr').forEach(tr=>{ if(!tr.dataset.name) return; tr.style.display=tr.dataset.name.includes(q)?'':'none' })}
+async function addFilter(){
+  const n=document.getElementById('fName').value.trim();
+  const q=parseInt(document.getElementById('fQty').value)||0;
+  if(!n) return;
+  await db.collection('filters').add({name:n, qty:q, created:Date.now()});
+  openFilters();
+}
+async function changeQty(docId, delta){
+  const ref = db.collection('filters').doc(docId);
+  const d = await ref.get(); if(!d.exists) return;
+  let qty = (Number(d.data().qty)||0) + delta;
+  if(qty<0) qty=0;
+  await ref.update({qty:qty});
+  openFilters();
+}
+async function delFilter(docId){ if(!confirm('Удалить фильтр?')) return; await db.collection('filters').doc(docId).delete(); openFilters(); }
 
 // НОВЫЙ АДМИН - через Firebase Auth, пароля в коде больше нет
 async function toggleAdmin(){
@@ -152,7 +188,8 @@ async function toggleAdmin(){
 auth.onAuthStateChanged(user=>{
   isAdmin = !!user;
   document.getElementById('adminBtn').innerText = isAdmin ? 'Выйти ('+user.email+')' : 'Адм';
-  if(currentBrand) openBrand(currentBrand);
+  if(viewingFilters) openFilters();
+  else if(currentBrand) openBrand(currentBrand);
   else if(currentCat) openCategory(currentCat.id);
   else renderCategories();
 });
