@@ -72,58 +72,70 @@ function setTab(active){
   document.getElementById('tabFiltBtn').classList.toggle('active', active==='filters');
 }
 
+// ИСПРАВЛЕНО: миграция больше не может повесить сайт
 async function migrateIfNeeded(){
-  const oldRef = await db.collection('storm').doc('data').get();
-  if(!oldRef.exists) return false;
-  if(localStorage.getItem('migrated_v2')==='1') return false;
-  const old = oldRef.data();
-  if(!old.categories) return false;
-  document.getElementById('app').innerHTML = `<h2>Идет перенос старой базы... Не закрывай</h2>`;
-  let count=0;
-  const batch = db.batch();
-  for(let c of old.categories){
-    const ref = db.collection('categories').doc(String(c.id));
-    batch.set(ref, c);
-    const brands = old.brands[c.id] || [];
-    for(let b of brands){
-      const bRef = db.collection('brands').doc(`${c.id}_${b}`);
-      batch.set(bRef, {name:b, categoryId:c.id});
+  try{
+    if(localStorage.getItem('migrated_v2')==='1') return false;
+    const oldRef = await db.collection('storm').doc('data').get();
+    if(!oldRef.exists) return false;
+    const old = oldRef.data();
+    if(!old.categories) return false;
+    document.getElementById('app').innerHTML = `<h2>Идет перенос старой базы... Не закрывай</h2>`;
+    let count=0;
+    const batch = db.batch();
+    for(let c of old.categories){
+      const ref = db.collection('categories').doc(String(c.id));
+      batch.set(ref, c);
+      const brands = old.brands[c.id] || [];
+      for(let b of brands){
+        const bRef = db.collection('brands').doc(`${c.id}_${b}`);
+        batch.set(bRef, {name:b, categoryId:c.id});
+      }
     }
-  }
-  await batch.commit();
-  let batch2 = db.batch(); let i=0;
-  for(let key in old.products){
-    for(let p of old.products[key]){
-      const parts = key.split('_');
-      const catId = parseInt(parts[0]);
-      const brand = key.substring(String(catId).length+1);
-      const pRef = db.collection('products').doc(String(p.id));
-      batch2.set(pRef, {name:p.name, volume:p.volume, price:p.price, categoryId:catId, brand:brand, id:p.id});
-      count++; i++;
-      if(i>400){ await batch2.commit(); batch2=db.batch(); i=0; }
+    await batch.commit();
+    let batch2 = db.batch(); let i=0;
+    for(let key in old.products){
+      for(let p of old.products[key]){
+        const parts = key.split('_');
+        const catId = parseInt(parts[0]);
+        const brand = key.substring(String(catId).length+1);
+        const pRef = db.collection('products').doc(String(p.id));
+        batch2.set(pRef, {name:p.name, volume:p.volume, price:p.price, categoryId:catId, brand:brand, id:p.id});
+        count++; i++;
+        if(i>400){ await batch2.commit(); batch2=db.batch(); i=0; }
+      }
     }
+    if(i>0) await batch2.commit();
+    localStorage.setItem('migrated_v2','1');
+    document.getElementById('app').innerHTML = `<h2 style="color:#00ff88">Перенос готов! Перенесено ${count} товаров</h2><p style="margin-top:10px">Старая база сохранена как резерв. Теперь сайт безлимитный.</p><button class="btn" style="margin-top:12px" onclick="load()">Продолжить</button>`;
+    return true;
+  }catch(e){
+    console.log('Миграция пропущена:', e.message);
+    return false;
   }
-  if(i>0) await batch2.commit();
-  localStorage.setItem('migrated_v2','1');
-  document.getElementById('app').innerHTML = `<h2 style="color:#00ff88">Перенос готов! Перенесено ${count} товаров</h2><p style="margin-top:10px">Старая база сохранена как резерв. Теперь сайт безлимитный.</p><button class="btn" style="margin-top:12px" onclick="load()">Продолжить</button>`;
-  return true;
 }
 
 async function load(){
-  const migrated = await migrateIfNeeded();
-  if(migrated) return;
+  try{
+    const migrated = await migrateIfNeeded();
+    if(migrated) return;
+  }catch(e){ console.log('load error', e); }
   renderCategories();
 }
 async function renderCategories(){
   currentCat=null; currentBrand=null; viewingFilters=false; currentFilterType=null; setTab('cat');
-  const snap = await db.collection('categories').get();
-  let cats = [];
-  if(snap.empty){
-    const defaults=[{id:1,name:'Моторное масло',icon:'🚗'},{id:2,name:'Дизельное масло',icon:'🚛'},{id:3,name:'Трансмиссионное масло',icon:'⚙️'},{id:4,name:'Гидравлическое масло',icon:'💧'},{id:5,name:'Компрессорное масло',icon:'🌀'},{id:6,name:'Автохимия',icon:'🧪'},{id:7,name:'Смазки',icon:'🧴'},{id:8,name:'Мото масло',icon:'🏍️'},{id:9,name:'Антифриз',icon:'❄️'}];
-    for(let c of defaults){ await db.collection('categories').doc(String(c.id)).set(c); cats.push(c); }
-  } else { snap.forEach(d=>cats.push(d.data())); }
-  cats.sort((a,b)=>a.id-b.id);
-  document.getElementById('app').innerHTML=`<h1>Категории • ${cats.length}</h1>${isAdmin?`<div class="admin-bar"><input id="newCat" placeholder="Новая категория"><button class="btn" onclick="addCategory()">+ Добавить</button></div>`:''}<div class="grid">${cats.map(c=>`<div class="card" onclick="openCategory(${c.id})"><div class="icon">${c.icon||'📦'}</div><div class="cat-name">${c.name}</div>${isAdmin?`<button class="del" style="top:6px;right:7px;width:22px;height:22px" onclick="event.stopPropagation();delCategory(${c.id})">✕</button>`:''}</div>`).join('')}</div>`;
+  try{
+    const snap = await db.collection('categories').get();
+    let cats = [];
+    if(snap.empty){
+      const defaults=[{id:1,name:'Моторное масло',icon:'🚗'},{id:2,name:'Дизельное масло',icon:'🚛'},{id:3,name:'Трансмиссионное масло',icon:'⚙️'},{id:4,name:'Гидравлическое масло',icon:'💧'},{id:5,name:'Компрессорное масло',icon:'🌀'},{id:6,name:'Автохимия',icon:'🧪'},{id:7,name:'Смазки',icon:'🧴'},{id:8,name:'Мото масло',icon:'🏍️'},{id:9,name:'Антифриз',icon:'❄️'}];
+      for(let c of defaults){ try{ await db.collection('categories').doc(String(c.id)).set(c); }catch(e){} cats.push(c); }
+    } else { snap.forEach(d=>cats.push(d.data())); }
+    cats.sort((a,b)=>a.id-b.id);
+    document.getElementById('app').innerHTML=`<h1>Категории • ${cats.length}</h1>${isAdmin?`<div class="admin-bar"><input id="newCat" placeholder="Новая категория"><button class="btn" onclick="addCategory()">+ Добавить</button></div>`:''}<div class="grid">${cats.map(c=>`<div class="card" onclick="openCategory(${c.id})"><div class="icon">${c.icon||'📦'}</div><div class="cat-name">${c.name}</div>${isAdmin?`<button class="del" style="top:6px;right:7px;width:22px;height:22px" onclick="event.stopPropagation();delCategory(${c.id})">✕</button>`:''}</div>`).join('')}</div>`;
+  }catch(e){
+    document.getElementById('app').innerHTML=`<h2 style="color:#ff4444">Нет связи с базой</h2><p style="color:#888;margin:10px 0">${e.message}</p><p style="color:#888">Проверь интернет и правила Firestore. Попробуй обновить страницу.</p><button class="btn" style="margin-top:12px" onclick="renderCategories()">↻ Повторить</button>`;
+  }
 }
 async function addCategory(){const el=document.getElementById('newCat');const name=el.value.trim();if(!name) return;const id=Date.now();await db.collection('categories').doc(String(id)).set({id,name,icon:'📦'});renderCategories();}
 async function delCategory(id){if(!confirm('Удалить категорию?')) return; await db.collection('categories').doc(String(id)).delete(); const bSnap=await db.collection('brands').where('categoryId','==',id).get(); bSnap.forEach(d=>d.ref.delete()); renderCategories();}
@@ -168,23 +180,27 @@ function openFilters(){
 }
 async function openFilterType(type){
   currentFilterType=type; viewingFilters=true; currentCat=null; currentBrand=null; setTab('filters');
-  const snap = await db.collection('filters').get();
-  let all=[]; snap.forEach(d=>all.push({docId:d.id, ...d.data()}));
-  let list = all.filter(f=> !f.type || f.type===type);
-  list.sort((a,b)=>(a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
-  const title = type==='air' ? '💨 ВОЗДУШНЫЕ' : '🌬️ САЛОННЫЕ';
-  const airCount = all.filter(f=> !f.type || f.type==='air').length;
-  const cabinCount = all.filter(f=> !f.type || f.type==='cabin').length;
-  document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${title}</h1><div class="back-small" onclick="openFilters()">← выбрать тип</div></div>
-  <div class="filter-switch"><button class="${type==='air'?'active':''}" onclick="openFilterType('air')">💨 ВОЗДУШНЫЕ (${airCount})</button><button class="${type==='cabin'?'active':''}" onclick="openFilterType('cabin')">🌬️ САЛОННЫЕ (${cabinCount})</button></div>
-  <p style="color:#888;margin-bottom:8px">Позиций: ${list.length} • Всего на складе: ${list.reduce((s,f)=>s+(Number(f.qty)||0),0)} шт</p>
-  <input id="sFilter" oninput="filterFilters()" placeholder="Поиск фильтра..." style="width:100%;margin-top:8px;padding:8px">
-  ${isAdmin?`<div class="admin-bar"><input id="fName" placeholder="Название фильтра (${type==='air'?'Воздушный':'Салонный'})" style="flex:1;min-width:180px"><input id="fQty" placeholder="Кол-во" type="number" style="width:80px" value="0"><button class="btn" onclick="addFilter()">+ Фильтр</button></div>`:''}
-  <table><thead><tr><th style="width:50px">N°</th><th>Название</th><th style="width:170px;text-align:center">Количество</th>${isAdmin?`<th style="width:40px"></th>`:''}</tr></thead><tbody id="tbodyFilters">${list.map((f,i)=>{
-    const qty = Number(f.qty)||0;
-    const color = qty===4 ? '#00ff88' : qty>4 ? '#ffb400' : '#ff4444';
-    return `<tr data-name="${(f.name||'').toLowerCase()}"><td>${i+1}</td><td style="font-weight:600">${f.name}</td><td style="text-align:center">${isAdmin?`<button class="qty-btn" onclick="changeQty('${f.docId}',-1)">−</button> <span class="qty-num" style="color:${color}">${qty}</span> <button class="qty-btn" onclick="changeQty('${f.docId}',1)">+</button>`:`<span class="qty-num" style="color:${color}">${qty}</span>`}</td>${isAdmin?`<td><button onclick="delFilter('${f.docId}')" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button></td>`:''}</tr>`;
-  }).join('') || `<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">Пока нет фильтров в этом разделе.</td></tr>`}</tbody></table>`;
+  try{
+    const snap = await db.collection('filters').get();
+    let all=[]; snap.forEach(d=>all.push({docId:d.id, ...d.data()}));
+    let list = all.filter(f=> !f.type || f.type===type);
+    list.sort((a,b)=>(a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase()));
+    const title = type==='air' ? '💨 ВОЗДУШНЫЕ' : '🌬️ САЛОННЫЕ';
+    const airCount = all.filter(f=> !f.type || f.type==='air').length;
+    const cabinCount = all.filter(f=> !f.type || f.type==='cabin').length;
+    document.getElementById('app').innerHTML=`<div class="brand-header"><h1>${title}</h1><div class="back-small" onclick="openFilters()">← выбрать тип</div></div>
+    <div class="filter-switch"><button class="${type==='air'?'active':''}" onclick="openFilterType('air')">💨 ВОЗДУШНЫЕ (${airCount})</button><button class="${type==='cabin'?'active':''}" onclick="openFilterType('cabin')">🌬️ САЛОННЫЕ (${cabinCount})</button></div>
+    <p style="color:#888;margin-bottom:8px">Позиций: ${list.length} • Всего на складе: ${list.reduce((s,f)=>s+(Number(f.qty)||0),0)} шт</p>
+    <input id="sFilter" oninput="filterFilters()" placeholder="Поиск фильтра..." style="width:100%;margin-top:8px;padding:8px">
+    ${isAdmin?`<div class="admin-bar"><input id="fName" placeholder="Название фильтра (${type==='air'?'Воздушный':'Салонный'})" style="flex:1;min-width:180px"><input id="fQty" placeholder="Кол-во" type="number" style="width:80px" value="0"><button class="btn" onclick="addFilter()">+ Фильтр</button></div>`:''}
+    <table><thead><tr><th style="width:50px">N°</th><th>Название</th><th style="width:170px;text-align:center">Количество</th>${isAdmin?`<th style="width:40px"></th>`:''}</tr></thead><tbody id="tbodyFilters">${list.map((f,i)=>{
+      const qty = Number(f.qty)||0;
+      const color = qty===4 ? '#00ff88' : qty>4 ? '#ffb400' : '#ff4444';
+      return `<tr data-name="${(f.name||'').toLowerCase()}"><td>${i+1}</td><td style="font-weight:600">${f.name}</td><td style="text-align:center">${isAdmin?`<button class="qty-btn" onclick="changeQty('${f.docId}',-1)">−</button> <span class="qty-num" style="color:${color}">${qty}</span> <button class="qty-btn" onclick="changeQty('${f.docId}',1)">+</button>`:`<span class="qty-num" style="color:${color}">${qty}</span>`}</td>${isAdmin?`<td><button onclick="delFilter('${f.docId}')" style="background:none;border:none;color:#f44;cursor:pointer;font-weight:900">✕</button></td>`:''}</tr>`;
+    }).join('') || `<tr><td colspan="4" style="text-align:center;color:#888;padding:16px">Пока нет фильтров в этом разделе.</td></tr>`}</tbody></table>`;
+  }catch(e){
+    document.getElementById('app').innerHTML=`<h2 style="color:#ff4444">Нет связи с базой фильтров</h2><p style="color:#888;margin:10px 0">${e.message}</p><button class="btn" onclick="openFilterType('${type}')">↻ Повторить</button>`;
+  }
 }
 function filterFilters(){const q=document.getElementById('sFilter').value.toLowerCase();document.querySelectorAll('#tbodyFilters tr').forEach(tr=>{ if(!tr.dataset.name) return; tr.style.display=tr.dataset.name.includes(q)?'':'none' })}
 async function addFilter(){
